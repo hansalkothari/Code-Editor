@@ -49,7 +49,7 @@ const Output = ({ editorRef }) => {
     }, 0);
 
     // 3) Open WebSocket connection
-    const ws = new WebSocket("ws://localhost:8000/ws/terminal");
+    const ws = new WebSocket("wss://code-editor-backend-n3e6.onrender.com/ws/terminal");
     socketRef.current = ws;
     setIsRunning(true);
 
