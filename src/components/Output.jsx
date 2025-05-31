@@ -133,7 +133,6 @@ const Output = ({ editorRef }) => {
   return (
     <Box w="50%">
       <VStack align="stretch" spacing={4}>
-        <Text fontSize="lg">Interactive Terminal</Text>
 
         <Button
           variant="outline"
@@ -141,7 +140,7 @@ const Output = ({ editorRef }) => {
           isDisabled={isRunning}
           onClick={runInteractive}
         >
-          Run Code (Interactive)
+          Run Code (Interactive Terminal)
         </Button>
 
         <Box
@@ -149,7 +148,7 @@ const Output = ({ editorRef }) => {
           flexGrow={1}
           border="1px solid #333"
           borderRadius="4px"
-          height="75vh"
+          height="85vh"
           overflow="hidden"
           bg="#1e1e1e"
           tabIndex={0} // make sure the box can be focused

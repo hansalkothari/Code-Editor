@@ -4,11 +4,12 @@ import { Editor } from "@monaco-editor/react";
 import LanguageSelector from "./LanguageSelector";
 import { CODE_SNIPPETS } from "../constants";
 import Output from "./Output";
+import ResetButton from "./ResetCode";
 
 const CodeEditor = () => {
   const editorRef = useRef();
   const [value, setValue] = useState("");
-  const [language, setLanguage] = useState("javascript");
+  const [language, setLanguage] = useState("python");
 
   const onMount = (editor) => {
     editorRef.current = editor;
@@ -24,14 +25,17 @@ const CodeEditor = () => {
     <Box>
       <HStack spacing={4}>
         <Box w="50%">
+        <HStack spacing={4} mb={4}>
           <LanguageSelector language={language} onSelect={onSelect} />
+          <ResetButton language={language} editorRef={editorRef} />
+        </HStack>
           <Editor
             options={{
               minimap: {
                 enabled: false,
               },
             }}
-            height="75vh"
+            height="85vh"
             theme="vs-dark"
             language={language}
             defaultValue={CODE_SNIPPETS[language]}
