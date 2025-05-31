@@ -1,120 +1,164 @@
+// Output.jsx
 import { useRef, useState } from "react";
-import {
-  Box,
-  Button,
-  Text,
-  Textarea,
-  useToast,
-  VStack,
-} from "@chakra-ui/react";
+import { Box, Button, Text, useToast, VStack } from "@chakra-ui/react";
+import { Terminal } from "xterm";
+import "xterm/css/xterm.css";
 
 const Output = ({ editorRef }) => {
   const toast = useToast();
-  const [stdin, setStdin] = useState("");
-  const [outputLines, setOutputLines] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isError, setIsError] = useState(false);
+  const terminalRef = useRef(null);
+  const xterm = useRef(null);
+  const socketRef = useRef(null);
+  const inputBuffer = useRef("");
+  const [isRunning, setIsRunning] = useState(false);
 
-  const runCode = async () => {
-    const sourceCode = editorRef.current.getValue();
-    if (!sourceCode) return;
+  const runInteractive = () => {
+    const code = editorRef.current.getValue();
+    if (!code) return;
 
-    setIsLoading(true);
-    setIsError(false);
-    setOutputLines(null);
+    // 1) Clean up any previous terminal or socket
+    if (xterm.current) {
+      xterm.current.dispose();
+      xterm.current = null;
+    }
+    if (socketRef.current) {
+      socketRef.current.close();
+      socketRef.current = null;
+    }
 
-    try {
-      const response = await fetch("http://localhost:8000/run-code", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          code: sourceCode,
-          stdin: stdin.endsWith("\n") ? stdin : stdin + "\n", // ensure newline
-        }),
-      });
+    // 2) Initialize xterm.js
+    xterm.current = new Terminal({
+      cols: 80,
+      rows: 24,
+      theme: {
+        background: "#1e1e1e",
+        foreground: "#ffffff",
+      },
+      fontFamily: "monospace",
+      fontSize: 14,
+      cursorBlink: true,
+    });
 
-      const data = await response.json();
+    xterm.current.open(terminalRef.current);
 
-      if (response.ok) {
-        // If there was an exception inside exec(), FastAPI returns error in data.error
-        if (data.error && data.error.length > 0) {
-          setIsError(true);
-          // Show the traceback lines as “output”
-          setOutputLines(data.error.split("\n"));
-        } else {
-          setIsError(false);
-          setOutputLines(data.output.split("\n"));
-        }
-      } else {
-        // HTTP 400 or 500
-        setIsError(true);
-        setOutputLines([
-          `HTTP ${response.status}: ${data.detail || "Unknown error"}`,
-        ]);
+    // Sometimes React needs a tick before focus works
+    setTimeout(() => {
+      if (xterm.current) {
+        xterm.current.focus();
       }
-    } catch (err) {
-      setIsError(true);
+    }, 0);
+
+    // 3) Open WebSocket connection
+    const ws = new WebSocket("ws://localhost:8000/ws/terminal");
+    socketRef.current = ws;
+    setIsRunning(true);
+
+    ws.onopen = () => {
+      // Send the Python code immediately
+      ws.send(code);
+
+      // Immediately focus so you can begin typing
+      xterm.current.focus();
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        const { type, payload } = msg;
+
+        if (type === "stdout") {
+          // Write exactly what Python printed (including the input prompt)
+          xterm.current.write(payload);
+        } else if (type === "stderr") {
+          xterm.current.write(`\x1b[31m${payload}\x1b[0m`);
+        } else if (type === "done") {
+          xterm.current.write(`\r\n${payload}`);
+          setIsRunning(false);
+          ws.close();
+        } else if (type === "error") {
+          xterm.current.write(`\x1b[31m${payload}\x1b[0m\r\n`);
+          setIsRunning(false);
+          ws.close();
+        }
+      } catch {
+        // If parsing fails, just write raw data
+        xterm.current.write(event.data);
+      }
+
+      // After Python writes something (e.g. a new prompt), re‐focus so typing goes through
+      setTimeout(() => {
+        if (xterm.current) xterm.current.focus();
+      }, 0);
+    };
+
+    ws.onerror = () => {
       toast({
-        title: "An error occurred.",
-        description: err.message || "Unable to run code",
+        title: "Connection error",
+        description:
+          "WebSocket connection failed. Ensure backend is running with uvicorn[standard].",
         status: "error",
         duration: 6000,
       });
-    } finally {
-      setIsLoading(false);
-    }
+      setIsRunning(false);
+    };
+
+    ws.onclose = () => {
+      setIsRunning(false);
+    };
+
+    // 4) Capture keystrokes, echo them locally, and forward to Python’s stdin
+    xterm.current.onKey((ev) => {
+      const { key } = ev;
+
+      if (key === "\r") {
+        // Enter key pressed
+        xterm.current.write("\r\n");
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(inputBuffer.current + "\n");  // Send complete line to stdin
+        }
+        inputBuffer.current = "";  // Clear buffer
+      } else if (key === "\u007f") {
+        // Handle backspace
+        if (inputBuffer.current.length > 0) {
+          inputBuffer.current = inputBuffer.current.slice(0, -1);
+          xterm.current.write("\b \b");
+        }
+      } else {
+        xterm.current.write(key);
+        inputBuffer.current += key;
+      }
+    });
   };
 
   return (
     <Box w="50%">
       <VStack align="stretch" spacing={4}>
-        <Text fontSize="lg">Terminal</Text>
-
-        {/* Textarea for stdin input */}
-        <Box>
-          <Text mb={2} fontSize="md">
-            Input (stdin):
-          </Text>
-          <Textarea
-            placeholder="Enter any input here (one per line)…"
-            value={stdin}
-            onChange={(e) => setStdin(e.target.value)}
-            resize="vertical"
-            minH="100px"
-            fontFamily="mono"
-            fontSize="sm"
-          />
-        </Box>
+        <Text fontSize="lg">Interactive Terminal</Text>
 
         <Button
           variant="outline"
           colorScheme="green"
-          isLoading={isLoading}
-          onClick={runCode}
+          isDisabled={isRunning}
+          onClick={runInteractive}
         >
-          Run Code
+          Run Code (Interactive)
         </Button>
 
-        {/* Output box */}
         <Box
+          ref={terminalRef}
           flexGrow={1}
-          p={2}
-          fontFamily="mono"
-          fontSize="sm"
-          whiteSpace="pre-wrap"
-          overflowY="auto"
-          bg="#1e1e1e"
-          color={isError ? "red.400" : "white"}
-          border="1px solid"
-          borderColor={isError ? "red.500" : "#333"}
+          border="1px solid #333"
           borderRadius="4px"
-          minH="200px"
-        >
-          {/* If outputLines is null, show placeholder text */}
-          {outputLines
-            ? outputLines.map((line, idx) => <Text key={idx}>{line}</Text>)
-            : 'If your code uses input(), type values above and click "Run Code".\nOutput will appear here.'}
-        </Box>
+          height="75vh"
+          overflow="hidden"
+          bg="#1e1e1e"
+          tabIndex={0} // make sure the box can be focused
+          onClick={() => {
+            if (xterm.current) {
+              xterm.current.focus();
+            }
+          }}
+        ></Box>
       </VStack>
     </Box>
   );
